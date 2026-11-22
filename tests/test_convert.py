@@ -336,3 +336,34 @@ def books():
     main = (out / "src" / "main.rs").read_text(encoding="utf-8")
     assert "mod models;" in main and "ORM: モデル Book" in main and any("ORM" in w for w in warns)
     assert 'serde = { version = "1"' in (out / "Cargo.toml").read_text(encoding="utf-8")
+
+
+def test_orm_queries_all_and_count_are_ported_to_sqlx(tmp_path):
+    from topoem import emit, extract
+
+    (tmp_path / "models.py").write_text('''from django.db import models
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    price = models.FloatField(default=0)
+''', encoding="utf-8")
+    (tmp_path / "views.py").write_text('''from django.http import JsonResponse
+def book_list(request):
+    return JsonResponse(list(Book.objects.values()), safe=False)
+def book_count(request):
+    return JsonResponse(Book.objects.count(), safe=False)
+def book_filter(request):
+    return JsonResponse(list(Book.objects.filter(price=1).values()), safe=False)
+''', encoding="utf-8")
+    (tmp_path / "urls.py").write_text('''from django.urls import path
+from . import views
+urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_count), path("books/cheap/", views.book_filter)]
+''', encoding="utf-8")
+    routes, _, _, _ = extract.extract_project(str(tmp_path))
+    out = tmp_path / "out"
+    emit.generate(routes, str(out), "poem", source_root=str(tmp_path))
+    main = (out / "src" / "main.rs").read_text(encoding="utf-8")
+    assert 'SELECT * FROM "book"' in main and 'SELECT COUNT(*) FROM "book"' in main
+    assert main.count("TODO") >= 1  # filter は移さない(誤訳より未移植)
+    assert "mod db;" in main and (out / "src" / "db.rs").exists()
+    assert "sqlx::FromRow" in (out / "src" / "models.rs").read_text(encoding="utf-8")
+    assert "sqlx" in (out / "Cargo.toml").read_text(encoding="utf-8")

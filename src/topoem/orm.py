@@ -209,12 +209,12 @@ def _rs_field(f):
     from .emit import rust_ident
 
     ident = rust_ident(f.name)
-    rename = '    #[serde(rename = "%s")]\n' % f.name if ident != f.name else ""
+    rename = '    #[serde(rename = "%s")]\n    #[cfg_attr(feature = "sqlx", sqlx(rename = "%s"))]\n' % (f.name, f.name) if ident != f.name else ""
     ty = "Option<%s>" % f.rust if f.nullable else f.rust
     return "%s    pub %s: %s," % (rename, ident, ty)
 
 
-def render_models_rs(models):
+def render_models_rs(models, sqlx=False):
     parts = ["//! 2Poem が ORM のモデルから生成した構造体(日時・UUID・JSON は文字列で持つ)。SQL は schema.sql。\n#![allow(dead_code)]\nuse serde::{Deserialize, Serialize};\n"]
     seen = set()
     for m in models:
@@ -222,7 +222,13 @@ def render_models_rs(models):
         if name in seen:
             continue
         seen.add(name)
-        parts.append("/// 元: %s(%s)\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct %s {\n%s\n}\n" % (os.path.basename(m.file), m.kind, name, "\n".join(_rs_field(f) for f in m.fields)))
+        derive = "#[derive(Debug, Clone, Serialize, Deserialize)]\n" + ('#[derive(sqlx::FromRow)]\n' if sqlx else "")
+        fields = "\n".join(_rs_field(f) for f in m.fields)
+        if sqlx:
+            fields = fields.replace('#[cfg_attr(feature = "sqlx", sqlx(rename = "', '#[sqlx(rename = "').replace('"))]\n', '")]\n')
+        else:
+            fields = re.sub(r"    #\[cfg_attr\(feature = \"sqlx\", sqlx\(rename = \"[^\"]*\"\)\)\]\n", "", fields)
+        parts.append("/// 元: %s(%s)\n%spub struct %s {\n%s\n}\n" % (os.path.basename(m.file), m.kind, derive, name, fields))
     return "\n".join(parts)
 
 

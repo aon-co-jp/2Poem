@@ -32,6 +32,7 @@ class Route:
     notes: list = field(default_factory=list)
     ported: str = ""  # 自動で移植できた応答(Rust の json! 式)。空なら TODO のまま
     ported_kind: str = ""  # json | text
+    query: tuple = ()  # ("all" | "count", モデル名, SQL) ORM の全件取得・件数を sqlx へ移したもの
     ported_expr: str = ""  # 計算式・分岐・代入まで含めて移植した、値(Value / String)を返す Rust のブロック式
 
 

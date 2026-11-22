@@ -66,6 +66,14 @@ def _poem_handler(r, name):
         args = "Path(%s): Path<%s>" % (rust_ident(p.name), p.rust)
     elif len(r.params) > 1:
         args = "Path((%s)): Path<(%s)>" % (", ".join(rust_ident(p.name) for p in r.params), ", ".join(p.rust for p in r.params))
+    if r.query:
+        kind, model, sql = r.query
+        fetch = (
+            'let n: i64 = sqlx::query_scalar(r#"%s"#).fetch_one(pool).await.map_err(poem::error::InternalServerError)?;\n    Ok(Json(json!(n)))' % sql
+            if kind == "count"
+            else 'let rows: Vec<models::%s> = sqlx::query_as(r#"%s"#).fetch_all(pool).await.map_err(poem::error::InternalServerError)?;\n    Ok(Json(serde_json::to_value(rows).map_err(poem::error::InternalServerError)?))' % (model, sql)
+        )
+        return "%s\n#[handler]\nasync fn %s(%s) -> poem::Result<Json<Value>> {\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = db::pool().await.map_err(poem::error::InternalServerError)?;\n    %s\n}\n" % (_comment(r), name, args, "件数" if kind == "count" else "全件取得", fetch)
     if r.ported_expr:
         note = "    // 自動移植: 計算式・代入・分岐を Rust にした(型を追えた範囲だけ。整数は i64、Python の大きい整数とは違う)\n"
         if r.ported_kind == "text":
@@ -106,6 +114,14 @@ def _rpoem_handler(r, name):
         lines.append('    let %s: %s = params.get("%s").and_then(|s| s.parse().ok()).unwrap_or_default();' % (ident, p.rust, p.name))
     pj = ", ".join('"%s": %s' % (p.name, rust_ident(p.name)) for p in r.params)
     unused = "params" if r.params else "_params"
+    if r.query:
+        kind, model, sql = r.query
+        err = "return open_runo_poem_compat::hyper_compat::html_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())"
+        if kind == "count":
+            q = 'let n: i64 = match sqlx::query_scalar(r#"%s"#).fetch_one(pool).await { Ok(v) => v, Err(e) => %s };\n    Json(serde_json::json!(n)).into_response(StatusCode::OK)' % (sql, err)
+        else:
+            q = 'let rows: Vec<models::%s> = match sqlx::query_as(r#"%s"#).fetch_all(pool).await { Ok(v) => v, Err(e) => %s };\n    Json(serde_json::to_value(rows).unwrap_or_default()).into_response(StatusCode::OK)' % (model, sql, err)
+        return "%s\n#[open_runo_poem_compat_macro::handler]\nasync fn %s(_req: Request, %s: Params) -> Response {\n%s\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = match db::pool().await { Ok(p) => p, Err(e) => %s };\n    %s\n}\n" % (_comment(r), name, unused, "\n".join(lines), "件数" if kind == "count" else "全件取得", err, q)
     if r.ported_expr:
         if r.ported_kind == "text":
             body = "open_runo_poem_compat::hyper_compat::html_response(StatusCode::OK, %s)" % r.ported_expr
@@ -170,7 +186,25 @@ def render_main(routes, target, warnings_out, open_cpu=True):
 OPEN_CPU_DEP = 'open-cpu = { git = "https://github.com/aon-co-jp/open-cpu" }\n'
 
 
-def render_cargo(name, target, poem_version, rpoem_path, open_cpu=True, models=False):
+DB_RS = '''//! 2Poem が生成した接続口(PostgreSQL、純 Rust の sqlx)。接続先は環境変数 DATABASE_URL。
+use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
+use tokio::sync::OnceCell;
+
+static POOL: OnceCell<PgPool> = OnceCell::const_new();
+
+pub async fn pool() -> Result<&'static PgPool, sqlx::Error> {
+    POOL.get_or_try_init(|| async {
+        let url = std::env::var("DATABASE_URL").map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+        PgPoolOptions::new().max_connections(5).connect(&url).await
+    })
+    .await
+}
+'''
+SQLX_DEP = 'sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "derive"] }\n'
+
+
+def render_cargo(name, target, poem_version, rpoem_path, open_cpu=True, models=False, db=False):
     if target == "rpoem":
         deps = 'open-runo-poem-compat = { path = "%s/crates/open-runo-poem-compat" }\nopen-runo-poem-compat-macro = { path = "%s/crates/open-runo-poem-compat-macro" }\nopen-runo-view = { path = "%s/crates/open-runo-view" }\nserde_json = "1"\n' % (rpoem_path, rpoem_path, rpoem_path)
     else:
@@ -179,7 +213,10 @@ def render_cargo(name, target, poem_version, rpoem_path, open_cpu=True, models=F
         deps += OPEN_CPU_DEP
     if models:
         deps += 'serde = { version = "1", features = ["derive"] }\n'
-    return '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n%stokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }\n' % (name, deps)
+    if db:
+        deps += SQLX_DEP
+    sync = ', "sync"' if db else ""
+    return '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n%stokio = { version = "1", features = ["rt-multi-thread", "macros", "net"%s] }\n' % (name, deps, sync)
 
 
 def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT_POEM, rpoem_path=RPOEM_REL, source_root=None, open_cpu=True):
@@ -192,17 +229,30 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
     for r in routes:
         for m in models:
             if re.search(r"\b%s\b" % re.escape(m.name), r.source or ""):
-                r.notes.append("ORM: モデル %s(テーブル %s)を使う。構造体は src/models.rs、SQL は schema.sql。問い合わせは自動では移植しない" % (m.name, m.table))
+                r.notes.append("ORM: モデル %s(テーブル %s)を使う。構造体は src/models.rs、SQL は schema.sql。全件取得・件数だけ自動移植し、ほかの問い合わせは移植しない" % (m.name, m.table))
+    from . import query
+
+    queried = 0
+    for r in routes:
+        if models and not (r.ported or r.ported_expr):
+            q = query.match_query(r.source or "", models)
+            if q:
+                r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1]))
+                queried += 1
     main, _ = render_main(routes, target, warnings, open_cpu)
     if models:
-        main = main.replace("]\nuse ", "]\nmod models;\nuse ", 1)
+        main = main.replace("]\nuse ", "]\nmod models;\n%suse " % ("mod db;\n" if queried else ""), 1)
         with open(os.path.join(out_dir, "src", "models.rs"), "w", encoding="utf-8", newline="\n") as f:
-            f.write(orm.render_models_rs(models))
+            f.write(orm.render_models_rs(models, bool(queried)))
+        if queried:
+            with open(os.path.join(out_dir, "src", "db.rs"), "w", encoding="utf-8", newline="\n") as f:
+                f.write(DB_RS)
+            warnings.append("ORM の全件取得・件数 %d 件を sqlx の問い合わせに移しました(接続先は環境変数 DATABASE_URL。filter・作成・更新・削除などは移していません)" % queried)
         with open(os.path.join(out_dir, "schema.sql"), "w", encoding="utf-8", newline="\n") as f:
             f.write(orm.render_schema_sql(models))
-        warnings.append("ORM のモデル %d 件を src/models.rs と schema.sql に写しました(問い合わせは自動では移植しません)" % len(models))
+        warnings.append("ORM のモデル %d 件を src/models.rs と schema.sql に写しました(全件取得・件数以外の問い合わせは自動では移植しません)" % len(models))
     with open(os.path.join(out_dir, "Cargo.toml"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(render_cargo(name, target, poem_version, rpoem_path, open_cpu, bool(models)))
+        f.write(render_cargo(name, target, poem_version, rpoem_path, open_cpu, bool(models), bool(queried)))
     with open(os.path.join(out_dir, "src", "main.rs"), "w", encoding="utf-8", newline="\n") as f:
         f.write(main)
     with open(os.path.join(out_dir, ".gitignore"), "w", encoding="utf-8", newline="\n") as f:
