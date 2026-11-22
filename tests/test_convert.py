@@ -205,8 +205,134 @@ def m():
     assert by["ping"].ported == '{"ok": true, "n": 1, "tags": ["a"], "none": null}' and by["ping"].ported_kind == "json"
     assert by["hello"].ported == '{"hello": name, "q": "a\\"b"}'
     assert by["t"].ported == '"plain"' and by["t"].ported_kind == "text"
-    assert by["c"].ported == "" and by["m"].ported == ""  # 計算・複数文は自動では移植しない(TODO のまま)
+    assert by["c"].ported == "" and "(a * 2_i64)" in by["c"].ported_expr  # 計算は ported_expr(ブロック式)へ
+    assert by["m"].ported == "" and "let x: i64 = 1_i64;" in by["m"].ported_expr
     text, _ = emit.render_main(list(by.values()), "poem", [])
     assert 'Json(json!({"ok": true' in text and '"plain".to_string()' in text and "TODO" in text
     rtext, _ = emit.render_main(list(by.values()), "rpoem", [])
     assert "serde_json::json!({\"ok\": true" in rtext
+
+
+def test_expressions_and_branches_are_ported(tmp_path):
+    by = _ported(tmp_path, '''from flask import Flask, jsonify
+app = Flask(__name__)
+@app.route("/grade/<int:score>")
+def grade(score):
+    if score >= 90:
+        return {"grade": "A"}
+    elif score >= 60:
+        return {"grade": "B", "next": 90 - score}
+    return {"grade": "C"}
+@app.route("/half/<int:n>")
+def half(n):
+    return {"half": n / 2, "floor": n // 2, "rem": n % 2, "big": n > 10 and n < 100}
+@app.route("/greet/<name>")
+def greet(name):
+    msg = f"hello {name}"
+    return jsonify({"msg": msg, "len": len(name), "up": name.upper(), "t": "x" if name == "bob" else "y"})
+@app.route("/div/<int:a>/<int:b>")
+def div(a, b):
+    return {"q": a / b}
+@app.route("/loop/<int:n>")
+def loop(n):
+    for i in range(n):
+        pass
+    return {"n": n}
+@app.route("/nofall/<int:n>")
+def nofall(n):
+    if n > 1:
+        return {"a": 1}
+@app.route("/mixed/<int:n>")
+def mixed(n):
+    if n > 1:
+        return "text"
+    return {"a": 1}
+@app.route("/text/<int:n>")
+def text(n):
+    if n > 1:
+        return "big"
+    return "small"
+''')
+    g = by["grade"].ported_expr
+    assert by["grade"].ported_kind == "json" and "if (score >= 90_i64)" in g and "if (score >= 60_i64)" in g and "(90_i64 - score)" in g
+    h = by["half"].ported_expr
+    assert "((n as f64) / (2_i64 as f64))" in h and "div_euclid(2_i64)" in h and "rem_euclid(2_i64)" in h and "&&" in h
+    m = by["greet"].ported_expr
+    assert 'format!("hello {}", name.clone())' in m and "chars().count()" in m and "to_uppercase()" in m and "if (name.clone() == " in m
+    # 変数での割り算(0 で例外)・ループ・return で終わらない道・種類が混ざるものは移植しない
+    for h in ("div", "loop", "nofall", "mixed"):
+        assert by[h].ported == "" and by[h].ported_expr == "", h
+    assert by["text"].ported_kind == "text" and by["text"].ported_expr.count("to_string()") == 2
+    text, _ = emit.render_main(list(by.values()), "poem", [])
+    assert "Json(" in text and "-> String" in text
+    rtext, _ = emit.render_main(list(by.values()), "rpoem", [])
+    assert "html_response(StatusCode::OK, {" in rtext
+
+
+def test_mixed_type_min_max_is_not_ported(tmp_path):
+    by = _ported(tmp_path, '''from flask import Flask
+app = Flask(__name__)
+@app.route("/a/<int:n>")
+def a(n):
+    return {"m": max(n, 3.5)}
+@app.route("/b/<int:n>")
+def b(n):
+    return {"m": max(n, 3)}
+''')
+    assert by["a"].ported_expr == "" and ".max(" in by["b"].ported_expr
+
+
+def test_port_semantics_match_python():
+    """ported の式と同じ意味を Python 側で実際に評価して、floor / 剰余の符号などの食い違いが無いことを確かめる。"""
+    assert -7 // 2 == -4 and -7 % 2 == 1  # Python の値。Rust の div_euclid / rem_euclid(正の定数)と一致する
+    assert (-7) // 2 == -(7 // 2) - 1
+
+
+def test_orm_models_are_ported_to_structs_and_schema(tmp_path):
+    from topoem import orm
+
+    (tmp_path / "models.py").write_text('''from django.db import models
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    author = models.ForeignKey("Author", on_delete=models.CASCADE)
+    price = models.FloatField(default=0)
+class Author(models.Model):
+    name = models.CharField(max_length=50)
+    born = models.DateField(null=True)
+''', encoding="utf-8")
+    (tmp_path / "sa.py").write_text('''from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    email = Column(String(80), nullable=False)
+    nick = Column(String(20))
+''', encoding="utf-8")
+    (tmp_path / "sm.py").write_text('''from typing import Optional
+from sqlmodel import SQLModel, Field
+class Hero(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    age: int | None = None
+''', encoding="utf-8")
+    ms = orm.extract_models(str(tmp_path))
+    assert sorted(m.name for m in ms) == ["Author", "Book", "Hero", "User"]
+    rs = orm.render_models_rs(ms)
+    assert "pub born: Option<String>," in rs and "pub author_id: i64," in rs and "pub nick: Option<String>," in rs and "pub age: Option<i64>," in rs
+    sql = orm.render_schema_sql(ms)
+    assert sql.index('"author"') < sql.index('"book"')  # 参照される表が先
+    assert '"email" TEXT NOT NULL' in sql
+    (tmp_path / "app.py").write_text('''from flask import Flask
+app = Flask(__name__)
+@app.route("/books")
+def books():
+    return {"n": Book.query.count()}
+''', encoding="utf-8")
+    routes, _, _, _ = extract.extract_project(str(tmp_path / "app.py"))
+    out = tmp_path / "out"
+    warns = emit.generate(routes, str(out), "poem", source_root=str(tmp_path))
+    assert (out / "src" / "models.rs").exists() and (out / "schema.sql").exists()
+    main = (out / "src" / "main.rs").read_text(encoding="utf-8")
+    assert "mod models;" in main and "ORM: モデル Book" in main and any("ORM" in w for w in warns)
+    assert 'serde = { version = "1"' in (out / "Cargo.toml").read_text(encoding="utf-8")

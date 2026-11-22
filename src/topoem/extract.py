@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 
 from .detect import detect_framework, parse_source
+from .port import port_complex
 
 HTTP = ("get", "post", "put", "delete", "patch", "head", "options")
 RUST_TYPES = {"int": "i64", "float": "f64", "str": "String", "string": "String", "path": "String", "uuid": "String", "slug": "String", "bool": "bool"}
@@ -31,6 +32,7 @@ class Route:
     notes: list = field(default_factory=list)
     ported: str = ""  # 自動で移植できた応答(Rust の json! 式)。空なら TODO のまま
     ported_kind: str = ""  # json | text
+    ported_expr: str = ""  # 計算式・分岐・代入まで含めて移植した、値(Value / String)を返す Rust のブロック式
 
 
 def _const_str(n):
@@ -116,8 +118,9 @@ def _returns_kind(func):
 
 
 def _ident(name):
-    s = re.sub(r"\W", "_", name).lower().strip("_") or "x"
-    return "h_" + s if s[0].isdigit() else s
+    from .emit import rust_ident  # 循環 import を避けて遅延 import
+
+    return rust_ident(name)
 
 
 def _lit(n, names):
@@ -153,7 +156,17 @@ def _lit(n, names):
     return None
 
 
-def port_body(func, param_names):
+def port_body(func, params):
+    """params: {名前: Rust の型}。まず定数だけの単純な本体を、だめなら計算式・代入・分岐を移植する。
+    戻り値は (種類, 単純な本体の json! の中身, 複雑な本体のブロック式)。"""
+    kind, lit = _port_simple(func, set(params))
+    if lit:
+        return kind, lit, ""
+    kind, expr = port_complex(func, params)
+    return kind, "", expr
+
+
+def _port_simple(func, param_names):
     """本体が(docstring を除いて)単一の return で、その値が定数・パラメータ・dict/list だけなら (種類, Rust 式)。それ以外は ("", "")。"""
     body = [b for b in func.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant) and isinstance(b.value.value, str))]
     if len(body) != 1 or not isinstance(body[0], ast.Return) or body[0].value is None:
@@ -207,7 +220,7 @@ def _decorator_routes(tree, src, file):
             if not path.startswith("/"):
                 path = "/" + path
             r = Route(fw, methods, path, node.name, params, _snippet(lines, node), file, node.lineno, _returns_kind(node))
-            r.ported_kind, r.ported = port_body(node, {p.name for p in params})
+            r.ported_kind, r.ported, r.ported_expr = port_body(node, {p.name: p.rust for p in params})
             out.append(r)
     return out
 
@@ -234,7 +247,7 @@ def _django_routes(tree, src, file, views):
         r = Route("django", methods, path, name, params, snippet, file, node.lineno, kind)
         fn = views.get(name, {}).get("func")
         if fn is not None and not isinstance(target, ast.Call):
-            r.ported_kind, r.ported = port_body(fn, {p.name for p in params})
+            r.ported_kind, r.ported, r.ported_expr = port_body(fn, {p.name: p.rust for p in params})
         if isinstance(target, ast.Call) or node.func.id == "re_path":
             r.notes.append("Django の正規表現/クラスベースビューは、メソッドとパスを推定しました")
         out.append(r)

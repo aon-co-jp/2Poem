@@ -30,7 +30,7 @@ pip install topoem            # (リリースの wheel から。PyPI 公開は�
 起動のたびに、前回の確認から24時間以上たっていれば切り離した子プロセスで最新リリースを調べ、新しければ `pip download --no-index`(PyPI は見ない)→ **リリースの `.sha256` と一致したときだけ** `pip install`。起動は遅くならない。止めるには `TOPOEM_NO_UPDATE=1`(`CI` 設定時も停止)。状態は `~/.2poem/`。信頼の根拠は GitHub への TLS と SHA-256(電子署名ではない)。
 
 ## 未了
-PyPI 公開(所有者のアカウントが必要)、生成した RPoem プロジェクトの CI での検証(RPoem の取得が重い。手元では `cargo check` 済み)、業務ロジックの自動移植、Django ORM・テンプレートの変換、macOS/Linux 実機でのインストール試験。
+PyPI 公開(所有者が pypi.org で「信頼された発行者」を登録し、リポジトリ変数 `PYPI_PUBLISH=true` を立てると、タグのたびに自動公開。ワークフローは用意済み)、ORM の問い合わせ(`.objects.filter` / `session.query`)・テンプレートの変換、ループ・関数呼び出しを含む業務ロジックの移植、macOS/Linux 実機でのインストール試験。
 
 MIT License.
 

@@ -66,6 +66,11 @@ def _poem_handler(r, name):
         args = "Path(%s): Path<%s>" % (rust_ident(p.name), p.rust)
     elif len(r.params) > 1:
         args = "Path((%s)): Path<(%s)>" % (", ".join(rust_ident(p.name) for p in r.params), ", ".join(p.rust for p in r.params))
+    if r.ported_expr:
+        note = "    // 自動移植: 計算式・代入・分岐を Rust にした(型を追えた範囲だけ。整数は i64、Python の大きい整数とは違う)\n"
+        if r.ported_kind == "text":
+            return "%s\n#[handler]\nasync fn %s(%s) -> String {\n%s    %s\n}\n" % (_comment(r), name, args, note, r.ported_expr)
+        return "%s\n#[handler]\nasync fn %s(%s) -> Json<Value> {\n%s    Json(%s)\n}\n" % (_comment(r), name, args, note, r.ported_expr)
     if r.ported and r.ported_kind == "text":
         return "%s\n#[handler]\nasync fn %s(%s) -> String {\n    // 自動移植: 元の本体は定数/パラメータだけを返す単純な関数\n    %s.to_string()\n}\n" % (_comment(r), name, args, r.ported)
     if r.ported:
@@ -101,6 +106,12 @@ def _rpoem_handler(r, name):
         lines.append('    let %s: %s = params.get("%s").and_then(|s| s.parse().ok()).unwrap_or_default();' % (ident, p.rust, p.name))
     pj = ", ".join('"%s": %s' % (p.name, rust_ident(p.name)) for p in r.params)
     unused = "params" if r.params else "_params"
+    if r.ported_expr:
+        if r.ported_kind == "text":
+            body = "open_runo_poem_compat::hyper_compat::html_response(StatusCode::OK, %s)" % r.ported_expr
+        else:
+            body = "Json(%s).into_response(StatusCode::OK)" % r.ported_expr
+        return "%s\n#[open_runo_poem_compat_macro::handler]\nasync fn %s(_req: Request, %s: Params) -> Response {\n%s\n    // 自動移植: 計算式・代入・分岐を Rust にした(型を追えた範囲だけ。整数は i64)\n    %s\n}\n" % (_comment(r), name, unused, "\n".join(lines), body)
     if r.ported and r.ported_kind == "text":
         body = 'open_runo_poem_compat::hyper_compat::html_response(StatusCode::OK, %s.to_string())' % r.ported
         return "%s\n#[open_runo_poem_compat_macro::handler]\nasync fn %s(_req: Request, %s: Params) -> Response {\n%s\n    // 自動移植: 元の本体は定数/パラメータだけを返す単純な関数\n    %s\n}\n" % (_comment(r), name, unused, "\n".join(lines), body)
@@ -152,20 +163,22 @@ def render_main(routes, target, warnings_out, open_cpu=True):
     if not routes:
         tail = tail.replace("Route::new()\n;", "Route::new();")
     # 使われていない Path の import による警告を避ける
-    text = "//! 2Poem が生成した骨組み(%s)。ルーティングとパスパラメータの型は写してあり、単純な本体(定数・パラメータだけを返す)は自動移植、それ以外のハンドラの本体は TODO。\n#![allow(unused_variables, unused_imports)]\n%s\n%s%s" % (target, head, "\n".join(handlers), tail)
+    text = "//! 2Poem が生成した骨組み(%s)。ルーティングとパスパラメータの型は写してあり、単純な本体(定数・パラメータ・計算式・代入・分岐)は自動移植、それ以外のハンドラの本体は TODO。\n#![allow(unused_variables, unused_imports, unused_parens)]\n%s\n%s%s" % (target, head, "\n".join(handlers), tail)
     return text, by_name
 
 
 OPEN_CPU_DEP = 'open-cpu = { git = "https://github.com/aon-co-jp/open-cpu" }\n'
 
 
-def render_cargo(name, target, poem_version, rpoem_path, open_cpu=True):
+def render_cargo(name, target, poem_version, rpoem_path, open_cpu=True, models=False):
     if target == "rpoem":
         deps = 'open-runo-poem-compat = { path = "%s/crates/open-runo-poem-compat" }\nopen-runo-poem-compat-macro = { path = "%s/crates/open-runo-poem-compat-macro" }\nopen-runo-view = { path = "%s/crates/open-runo-view" }\nserde_json = "1"\n' % (rpoem_path, rpoem_path, rpoem_path)
     else:
         deps = 'poem = "%s"\nserde_json = "1"\n' % poem_version
     if open_cpu:
         deps += OPEN_CPU_DEP
+    if models:
+        deps += 'serde = { version = "1", features = ["derive"] }\n'
     return '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n%stokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }\n' % (name, deps)
 
 
@@ -173,9 +186,23 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
     """プロジェクトを書き出す。警告(文字列のリスト)を返す。"""
     warnings = []
     os.makedirs(os.path.join(out_dir, "src"), exist_ok=True)
+    from . import orm
+
+    models = orm.extract_models(source_root) if source_root else []
+    for r in routes:
+        for m in models:
+            if re.search(r"\b%s\b" % re.escape(m.name), r.source or ""):
+                r.notes.append("ORM: モデル %s(テーブル %s)を使う。構造体は src/models.rs、SQL は schema.sql。問い合わせは自動では移植しない" % (m.name, m.table))
     main, _ = render_main(routes, target, warnings, open_cpu)
+    if models:
+        main = main.replace("]\nuse ", "]\nmod models;\nuse ", 1)
+        with open(os.path.join(out_dir, "src", "models.rs"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(orm.render_models_rs(models))
+        with open(os.path.join(out_dir, "schema.sql"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(orm.render_schema_sql(models))
+        warnings.append("ORM のモデル %d 件を src/models.rs と schema.sql に写しました(問い合わせは自動では移植しません)" % len(models))
     with open(os.path.join(out_dir, "Cargo.toml"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(render_cargo(name, target, poem_version, rpoem_path, open_cpu))
+        f.write(render_cargo(name, target, poem_version, rpoem_path, open_cpu, bool(models)))
     with open(os.path.join(out_dir, "src", "main.rs"), "w", encoding="utf-8", newline="\n") as f:
         f.write(main)
     with open(os.path.join(out_dir, ".gitignore"), "w", encoding="utf-8", newline="\n") as f:
