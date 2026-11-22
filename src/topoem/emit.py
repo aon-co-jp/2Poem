@@ -69,11 +69,13 @@ def _poem_handler(r, name):
     if r.query:
         kind, model, sql = r.query
         fetch = (
-            'let n: i64 = sqlx::query_scalar(r#"%s"#).fetch_one(pool).await.map_err(poem::error::InternalServerError)?;\n    Ok(Json(json!(n)))' % sql
+            'let row: Option<models::%s> = sqlx::query_as(r#"%s"#).fetch_optional(pool).await.map_err(poem::error::InternalServerError)?;\n    match row {\n        Some(v) => Ok(Json(serde_json::to_value(v).map_err(poem::error::InternalServerError)?)),\n        None => Err(poem::Error::from_status(poem::http::StatusCode::NOT_FOUND)),\n    }' % (model, sql)
+            if kind == "one"
+            else 'let n: i64 = sqlx::query_scalar(r#"%s"#).fetch_one(pool).await.map_err(poem::error::InternalServerError)?;\n    Ok(Json(json!(n)))' % sql
             if kind == "count"
             else 'let rows: Vec<models::%s> = sqlx::query_as(r#"%s"#).fetch_all(pool).await.map_err(poem::error::InternalServerError)?;\n    Ok(Json(serde_json::to_value(rows).map_err(poem::error::InternalServerError)?))' % (model, sql)
         )
-        return "%s\n#[handler]\nasync fn %s(%s) -> poem::Result<Json<Value>> {\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = db::pool().await.map_err(poem::error::InternalServerError)?;\n    %s\n}\n" % (_comment(r), name, args, "件数" if kind == "count" else "全件取得", fetch)
+        return "%s\n#[handler]\nasync fn %s(%s) -> poem::Result<Json<Value>> {\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = db::pool().await.map_err(poem::error::InternalServerError)?;\n    %s\n}\n" % (_comment(r), name, args, {"count": "件数", "one": "1件取得(なければ404)"}.get(kind, "全件取得"), fetch)
     if r.ported_expr:
         note = "    // 自動移植: 計算式・代入・分岐を Rust にした(型を追えた範囲だけ。整数は i64、Python の大きい整数とは違う)\n"
         if r.ported_kind == "text":
@@ -117,11 +119,13 @@ def _rpoem_handler(r, name):
     if r.query:
         kind, model, sql = r.query
         err = "return open_runo_poem_compat::hyper_compat::html_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())"
-        if kind == "count":
+        if kind == "one":
+            q = 'let row: Option<models::%s> = match sqlx::query_as(r#"%s"#).fetch_optional(pool).await { Ok(v) => v, Err(e) => %s };\n    match row {\n        Some(v) => Json(serde_json::to_value(v).unwrap_or_default()).into_response(StatusCode::OK),\n        None => open_runo_poem_compat::hyper_compat::html_response(StatusCode::NOT_FOUND, "not found".to_string()),\n    }' % (model, sql, err)
+        elif kind == "count":
             q = 'let n: i64 = match sqlx::query_scalar(r#"%s"#).fetch_one(pool).await { Ok(v) => v, Err(e) => %s };\n    Json(serde_json::json!(n)).into_response(StatusCode::OK)' % (sql, err)
         else:
             q = 'let rows: Vec<models::%s> = match sqlx::query_as(r#"%s"#).fetch_all(pool).await { Ok(v) => v, Err(e) => %s };\n    Json(serde_json::to_value(rows).unwrap_or_default()).into_response(StatusCode::OK)' % (model, sql, err)
-        return "%s\n#[open_runo_poem_compat_macro::handler]\nasync fn %s(_req: Request, %s: Params) -> Response {\n%s\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = match db::pool().await { Ok(p) => p, Err(e) => %s };\n    %s\n}\n" % (_comment(r), name, unused, "\n".join(lines), "件数" if kind == "count" else "全件取得", err, q)
+        return "%s\n#[open_runo_poem_compat_macro::handler]\nasync fn %s(_req: Request, %s: Params) -> Response {\n%s\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = match db::pool().await { Ok(p) => p, Err(e) => %s };\n    %s\n}\n" % (_comment(r), name, unused, "\n".join(lines), {"count": "件数", "one": "1件取得(なければ404)"}.get(kind, "全件取得"), err, q)
     if r.ported_expr:
         if r.ported_kind == "text":
             body = "open_runo_poem_compat::hyper_compat::html_response(StatusCode::OK, %s)" % r.ported_expr

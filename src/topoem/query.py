@@ -50,8 +50,11 @@ def _where(keywords, root, by_name):
     if not m:
         return None
     cols = {f.name: f for f in m.fields if not f.ref}
+    pks = [f.name for f in m.fields if f.pk]
     parts = []
     for k in keywords:
+        if k.arg == "pk" and len(pks) == 1:
+            k = ast.keyword(arg=pks[0], value=k.value)
         lit = _lit(k.value)
         name, _, lookup = (k.arg or "").partition("__")
         op = {"": "=", "exact": "=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(lookup)
@@ -80,12 +83,15 @@ def match_query(source, models):
     ops = [(c[0], c[1], c[2]) for c in calls]
     where = ""
     # Django の filter(列=整数/真偽/文字列) だけは、列が確かにあるときに WHERE へ移す(ほかのキーワード引数つきは移さない)
-    if ops and ops[0][0] == "filter" and ops[0][2] and not ops[0][1] and not any(c[2] for c in ops[1:]):
+    one = bool(ops and ops[0][0] == "get" and len(ops) == 1 and ops[0][2] and not ops[0][1])
+    if ops and ops[0][0] in ("filter", "get") and (ops[0][0] == "filter" or one) and ops[0][2] and not ops[0][1] and not any(c[2] for c in ops[1:]):
         wm = _where(ops[0][2], root, by_name)
         if wm is None:
             return None
         where = wm
         ops[0] = ("all", [], [])
+        if one:
+            return (("one", by_name[root.value.id], where, "")) if root.value.id in by_name else None
     order = ""
     for i, c in enumerate(ops):
         if c[0] == "order_by" and not c[2] and c[1] and isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
@@ -140,4 +146,4 @@ def sql_for(kind, model, where="", order=""):
         w += " ORDER BY " + order
     if kind == "count":
         return 'SELECT COUNT(*) FROM "%s"%s' % (model.table, w)
-    return 'SELECT * FROM "%s"%s' % (model.table, w)
+    return 'SELECT * FROM "%s"%s%s' % (model.table, w, " LIMIT 1" if kind == "one" else "")
