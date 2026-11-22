@@ -394,7 +394,19 @@ class User(Base):
 ''', encoding="utf-8")
     models = orm.extract_models(str(tmp_path))
     q = query.match_query('def f():\n    return jsonify(db.session.query(User).filter_by(email="a@b").all())\n', models)
-    assert q and query.sql_for(*[q[0], q[1], q[2], q[3]]) == 'SELECT * FROM "users" WHERE "email" = \'a@b\''
+    assert q and query.sql_for(q[0], q[1], q[2], q[3]) == 'SELECT * FROM "users" WHERE "email" = \'a@b\''
     q = query.match_query('def f():\n    return jsonify(User.query.filter_by(id=3).count())\n', models)
     assert q and query.sql_for(q[0], q[1], q[2], q[3]) == 'SELECT COUNT(*) FROM "users" WHERE "id" = 3'
     assert query.match_query('def f():\n    return jsonify(User.query.filter_by(nope=3).all())\n', models) is None
+
+
+
+def test_slice_becomes_limit(tmp_path):
+    from topoem import orm, query
+
+    (tmp_path / "m.py").write_text("from django.db import models\nclass Book(models.Model):\n    title = models.CharField(max_length=10)\n", encoding="utf-8")
+    ms = orm.extract_models(str(tmp_path))
+    src = 'def f(r):\n    return JsonResponse(list(%s), safe=False)\n'
+    q = query.match_query(src % 'Book.objects.order_by("title")[:5]', ms)
+    assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "book" ORDER BY "title" LIMIT 5'
+    assert query.match_query(src % "Book.objects.all()[2:5]", ms) is None

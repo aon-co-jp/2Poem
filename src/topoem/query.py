@@ -78,6 +78,10 @@ def match_query(source, models):
         return None
     by_name = {m.name: m for m in models}
     v = _unwrap(body[0].value)
+    limit = 0
+    if isinstance(v, ast.Subscript) and isinstance(v.slice, ast.Slice) and v.slice.lower is None and v.slice.step is None             and isinstance(v.slice.upper, ast.Constant) and type(v.slice.upper.value) is int and 0 < v.slice.upper.value <= 10000:
+        limit = v.slice.upper.value
+        v = v.value
     # list(M.objects.values()) のように list が内側にある形は _unwrap で外れる
     root, calls = _chain(v)
     ops = [(c[0], c[1], c[2]) for c in calls]
@@ -91,7 +95,7 @@ def match_query(source, models):
         where = wm
         ops[0] = ("all", [], [])
         if one:
-            return (("one", by_name[root.value.id], where, "")) if root.value.id in by_name else None
+            return (("one", by_name[root.value.id], where, "", 0)) if root.value.id in by_name else None
     order = ""
     for i, c in enumerate(ops):
         if c[0] == "order_by" and not c[2] and c[1] and isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
@@ -128,12 +132,12 @@ def match_query(source, models):
 
     def done(kind, mname):
         m = by_name.get(mname)
-        return (kind, m, where, order if kind == "all" else "") if m else None
+        return (kind, m, where, order if kind == "all" else "", limit if kind == "all" else 0) if m else None
 
     # Django: M.objects.all() / values() / count()
     if isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
         names = [c[0] for c in ops]
-        if names in (["all"], ["values"], ["all", "values"]) and all(not c[1] for c in ops):
+        if (names in (["all"], ["values"], ["all", "values"]) or (names == [] and order)) and all(not c[1] for c in ops):
             return done("all", root.value.id)
         if names in (["count"], ["all", "count"]) and all(not c[1] for c in ops):
             return done("count", root.value.id)
@@ -157,10 +161,12 @@ def match_query(source, models):
     return None
 
 
-def sql_for(kind, model, where="", order=""):
+def sql_for(kind, model, where="", order="", limit=0):
     w = (" WHERE " + where) if where else ""
     if order:
         w += " ORDER BY " + order
+    if limit:
+        w += " LIMIT %d" % limit
     if kind == "count":
         return 'SELECT COUNT(*) FROM "%s"%s' % (model.table, w)
     return 'SELECT * FROM "%s"%s%s' % (model.table, w, " LIMIT 1" if kind == "one" else "")
