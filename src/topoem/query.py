@@ -53,9 +53,11 @@ def _where(keywords, root, by_name):
     parts = []
     for k in keywords:
         lit = _lit(k.value)
-        if k.arg not in cols or lit is None:
+        name, _, lookup = (k.arg or "").partition("__")
+        op = {"": "=", "exact": "=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(lookup)
+        if name not in cols or lit is None or op is None:
             return None
-        parts.append('"%s" = %s' % (k.arg, lit))
+        parts.append('"%s" %s %s' % (name, op, lit))
     return " AND ".join(parts)
 
 
