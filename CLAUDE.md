@@ -13,7 +13,9 @@
 - 業務ロジックの自動移植: 定数・パラメータ・dict/list に加え、**計算式・比較・三項・f文字列・代入・`if/elif/else`**(全部の道が return で終わるもの)を型を追って Rust にする。生成サーバーを実際に起動し Python と同値を確認。
 - ORM: Django / SQLAlchemy / SQLModel のモデルを `src/models.rs`(serde 構造体)と `schema.sql`(PostgreSQL 向け)へ。
 - 生成物に open-cpu を既定で同梱。`deps --apply --verify auto` で依存更新(失敗時は自動復元)。試験26件、CI(3 OS × 3 Python、生成物の cargo check)全成功。
-**完成予定**: ORM の問い合わせ(`.objects.filter` / `session.query`)の移植、テンプレートの変換、ループ・関数呼び出しを含む本体の移植、PyPI 公開。
+- ORM の問い合わせ(未リリース、`main`): 本体が単一の `return` で、`M.objects.all()` / `list(M.objects.values())` / `.count()`、`session.query(M).all()/.count()`、`M.query.all()/.count()`、`session.exec(select(M)).all()` のどれかなら、sqlx(PostgreSQL、純 Rust)の問い合わせへ移す(`src/db.rs`、接続先は環境変数 `DATABASE_URL`)。`filter`・`get`・作成・更新・削除などは移さず TODO のまま。Poem 版・RPoem 版とも `cargo build` 成功。**実際の DB への接続は未確認**(この PC に PostgreSQL が無い)。
+
+**完成予定**: ORM の `filter` などの問い合わせの移植と PostgreSQL での実行確認、テンプレートの変換、ループ・関数呼び出しを含む本体の移植、PyPI 公開。
 **課題**
 1. PyPI: 所有者が pypi.org で pending publisher(project `topoem` / owner `aon-co-jp` / repo `2Poem` / workflow `ci.yml` / environment `pypi`)を登録し、リポジトリ変数 `PYPI_PUBLISH=true` を設定して次のタグを push する必要がある(ワークフローは用意済み、トークン不要)。
 2. 誤訳より未移植を選ぶ方針のため、変数での割り算、型が混ざる `max(7, 3.5)`、連鎖比較、ループ、文字列の直接 return は `TODO` のまま。整数は i64(Python の大きい整数とは違う)。
@@ -24,7 +26,9 @@
 - Automatic business-logic porting: besides constants, parameters and dict/list, it now ports **arithmetic, comparisons, ternaries, f-strings, assignments and `if/elif/else`** (when every path returns) with type tracking. A generated server was run and matched Python's values.
 - ORM: Django / SQLAlchemy / SQLModel models become `src/models.rs` (serde structs) and `schema.sql` (PostgreSQL-oriented).
 - Generated projects bundle open-cpu by default; `deps --apply --verify auto` updates dependencies with automatic restore. 26 tests; CI (3 OS x 3 Python, cargo check of generated output) is all green.
-**Planned**: porting ORM queries (`.objects.filter` / `session.query`), templates, bodies with loops/function calls, and the PyPI release.
+- ORM queries (unreleased, on `main`): when the body is a single `return` of `M.objects.all()` / `list(M.objects.values())` / `.count()`, `session.query(M).all()/.count()`, `M.query.all()/.count()` or `session.exec(select(M)).all()`, it becomes an sqlx (PostgreSQL, pure Rust) query (`src/db.rs`, connection string from env `DATABASE_URL`). `filter`, `get`, create, update and delete stay `TODO`. Both the Poem and RPoem outputs pass `cargo build`. **A real database connection is unverified** (no PostgreSQL on this PC).
+
+**Planned**: porting ORM queries such as `filter` and running them against PostgreSQL, templates, bodies with loops/function calls, and the PyPI release.
 **Issues**
 1. PyPI: the owner must register a pending publisher on pypi.org (project `topoem` / owner `aon-co-jp` / repo `2Poem` / workflow `ci.yml` / environment `pypi`), set the repository variable `PYPI_PUBLISH=true` and push the next tag (workflow is ready, no token needed).
 2. Because unported is preferred over mistranslated, division by a variable, mixed-type `max(7, 3.5)`, chained comparisons, loops and bare string returns stay `TODO`. Integers are i64 (not Python bigints).
