@@ -106,6 +106,23 @@ def match_query(source, models):
             order = ", ".join(parts)
             ops.pop(i)
             break
+    # SQLAlchemy / Flask-SQLAlchemy の filter_by(列=リテラル)
+    for i, c in enumerate(ops):
+        if c[0] == "filter_by" and c[2] and not c[1] and not where:
+            mname = ""
+            if isinstance(root, ast.Attribute) and root.attr == "query" and isinstance(root.value, ast.Name):
+                mname = root.value.id
+            elif ops[0][0] == "query" and len(ops[0][1]) == 1:
+                mname = _name(ops[0][1][0])
+            m = by_name.get(mname)
+            if not m:
+                return None
+            wm = _where(c[2], ast.Attribute(value=ast.Name(id=mname), attr="objects"), by_name)
+            if wm is None:
+                return None
+            where = wm
+            ops.pop(i)
+            break
     if any(c[2] for c in ops):
         return None
 

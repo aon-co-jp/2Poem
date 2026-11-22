@@ -379,3 +379,22 @@ urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_
     assert "mod db;" in main and (out / "src" / "db.rs").exists()
     assert "sqlx::FromRow" in (out / "src" / "models.rs").read_text(encoding="utf-8")
     assert "sqlx" in (out / "Cargo.toml").read_text(encoding="utf-8")
+
+
+def test_sqlalchemy_filter_by_is_ported_to_where(tmp_path):
+    from topoem import orm, query
+
+    (tmp_path / "sa.py").write_text('''from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    email = Column(String(80), nullable=False)
+''', encoding="utf-8")
+    models = orm.extract_models(str(tmp_path))
+    q = query.match_query('def f():\n    return jsonify(db.session.query(User).filter_by(email="a@b").all())\n', models)
+    assert q and query.sql_for(*[q[0], q[1], q[2], q[3]]) == 'SELECT * FROM "users" WHERE "email" = \'a@b\''
+    q = query.match_query('def f():\n    return jsonify(User.query.filter_by(id=3).count())\n', models)
+    assert q and query.sql_for(q[0], q[1], q[2], q[3]) == 'SELECT COUNT(*) FROM "users" WHERE "id" = 3'
+    assert query.match_query('def f():\n    return jsonify(User.query.filter_by(nope=3).all())\n', models) is None
