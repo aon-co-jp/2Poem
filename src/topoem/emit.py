@@ -237,7 +237,7 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
         if models and not (r.ported or r.ported_expr):
             q = query.match_query(r.source or "", models)
             if q:
-                r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1], q[2]))
+                r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1], q[2], q[3]))
                 queried += 1
     main, _ = render_main(routes, target, warnings, open_cpu)
     if models:

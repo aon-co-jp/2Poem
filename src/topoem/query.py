@@ -86,12 +86,26 @@ def match_query(source, models):
             return None
         where = wm
         ops[0] = ("all", [], [])
+    order = ""
+    for i, c in enumerate(ops):
+        if c[0] == "order_by" and not c[2] and c[1] and isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
+            m = by_name.get(root.value.id)
+            cols = {f.name for f in m.fields if not f.ref} if m else set()
+            parts = []
+            for a in c[1]:
+                v = a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None
+                if v is None or v.lstrip("-") not in cols:
+                    return None
+                parts.append('"%s"%s' % (v.lstrip("-"), " DESC" if v.startswith("-") else ""))
+            order = ", ".join(parts)
+            ops.pop(i)
+            break
     if any(c[2] for c in ops):
         return None
 
     def done(kind, mname):
         m = by_name.get(mname)
-        return (kind, m, where) if m else None
+        return (kind, m, where, order if kind == "all" else "") if m else None
 
     # Django: M.objects.all() / values() / count()
     if isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
@@ -120,8 +134,10 @@ def match_query(source, models):
     return None
 
 
-def sql_for(kind, model, where=""):
+def sql_for(kind, model, where="", order=""):
     w = (" WHERE " + where) if where else ""
+    if order:
+        w += " ORDER BY " + order
     if kind == "count":
         return 'SELECT COUNT(*) FROM "%s"%s' % (model.table, w)
     return 'SELECT * FROM "%s"%s' % (model.table, w)
