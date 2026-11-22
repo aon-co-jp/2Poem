@@ -352,18 +352,21 @@ def book_list(request):
 def book_count(request):
     return JsonResponse(Book.objects.count(), safe=False)
 def book_filter(request):
-    return JsonResponse(list(Book.objects.filter(price=1).values()), safe=False)
+    return JsonResponse(list(Book.objects.filter(title="it's").values()), safe=False)
+def book_gt(request):
+    return JsonResponse(list(Book.objects.filter(price__gt=1).values()), safe=False)
 ''', encoding="utf-8")
     (tmp_path / "urls.py").write_text('''from django.urls import path
 from . import views
-urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_count), path("books/cheap/", views.book_filter)]
+urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_count), path("books/cheap/", views.book_filter), path("books/gt/", views.book_gt)]
 ''', encoding="utf-8")
     routes, _, _, _ = extract.extract_project(str(tmp_path))
     out = tmp_path / "out"
     emit.generate(routes, str(out), "poem", source_root=str(tmp_path))
     main = (out / "src" / "main.rs").read_text(encoding="utf-8")
     assert 'SELECT * FROM "book"' in main and 'SELECT COUNT(*) FROM "book"' in main
-    assert main.count("TODO") >= 1  # filter は移さない(誤訳より未移植)
+    assert """WHERE "title" = 'it''s'""" in main  # 列=文字列は WHERE へ(引用符は二重化)
+    assert main.count("TODO") >= 1  # price__gt など列=リテラル以外の filter は移さない(誤訳より未移植)
     assert "mod db;" in main and (out / "src" / "db.rs").exists()
     assert "sqlx::FromRow" in (out / "src" / "models.rs").read_text(encoding="utf-8")
     assert "sqlx" in (out / "Cargo.toml").read_text(encoding="utf-8")

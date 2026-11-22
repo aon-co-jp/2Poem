@@ -229,7 +229,7 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
     for r in routes:
         for m in models:
             if re.search(r"\b%s\b" % re.escape(m.name), r.source or ""):
-                r.notes.append("ORM: モデル %s(テーブル %s)を使う。構造体は src/models.rs、SQL は schema.sql。全件取得・件数だけ自動移植し、ほかの問い合わせは移植しない" % (m.name, m.table))
+                r.notes.append("ORM: モデル %s(テーブル %s)を使う。構造体は src/models.rs、SQL は schema.sql。全件取得・件数・列=リテラルの filter だけ自動移植し、ほかの問い合わせは移植しない" % (m.name, m.table))
     from . import query
 
     queried = 0
@@ -237,7 +237,7 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
         if models and not (r.ported or r.ported_expr):
             q = query.match_query(r.source or "", models)
             if q:
-                r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1]))
+                r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1], q[2]))
                 queried += 1
     main, _ = render_main(routes, target, warnings, open_cpu)
     if models:
@@ -247,10 +247,10 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
         if queried:
             with open(os.path.join(out_dir, "src", "db.rs"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(DB_RS)
-            warnings.append("ORM の全件取得・件数 %d 件を sqlx の問い合わせに移しました(接続先は環境変数 DATABASE_URL。filter・作成・更新・削除などは移していません)" % queried)
+            warnings.append("ORM の全件取得・件数・単純な filter %d 件を sqlx の問い合わせに移しました(接続先は環境変数 DATABASE_URL。filter・作成・更新・削除などは移していません)" % queried)
         with open(os.path.join(out_dir, "schema.sql"), "w", encoding="utf-8", newline="\n") as f:
             f.write(orm.render_schema_sql(models))
-        warnings.append("ORM のモデル %d 件を src/models.rs と schema.sql に写しました(全件取得・件数以外の問い合わせは自動では移植しません)" % len(models))
+        warnings.append("ORM のモデル %d 件を src/models.rs と schema.sql に写しました(全件取得・件数・単純な filter 以外の問い合わせは自動では移植しません)" % len(models))
     with open(os.path.join(out_dir, "Cargo.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(render_cargo(name, target, poem_version, rpoem_path, open_cpu, bool(models), bool(queried)))
     with open(os.path.join(out_dir, "src", "main.rs"), "w", encoding="utf-8", newline="\n") as f:

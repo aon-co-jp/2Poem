@@ -32,6 +32,33 @@ def _name(n):
     return n.id if isinstance(n, ast.Name) else (n.attr if isinstance(n, ast.Attribute) else "")
 
 
+def _lit(v):
+    c = v.value if isinstance(v, ast.Constant) else None
+    if isinstance(c, bool):
+        return "TRUE" if c else "FALSE"
+    if isinstance(c, int):
+        return str(c)
+    if isinstance(c, str) and all(32 <= ord(ch) < 127 and ch not in ('"', chr(92)) for ch in c):
+        return "'" + c.replace("'", "''") + "'"
+    return None
+
+
+def _where(keywords, root, by_name):
+    if not (isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name)):
+        return None
+    m = by_name.get(root.value.id)
+    if not m:
+        return None
+    cols = {f.name: f for f in m.fields if not f.ref}
+    parts = []
+    for k in keywords:
+        lit = _lit(k.value)
+        if k.arg not in cols or lit is None:
+            return None
+        parts.append('"%s" = %s' % (k.arg, lit))
+    return " AND ".join(parts)
+
+
 def match_query(source, models):
     """関数のソース(先頭数行)から ("all" | "count", モデル) を返す。合わなければ None。"""
     try:
@@ -49,12 +76,20 @@ def match_query(source, models):
     # list(M.objects.values()) のように list が内側にある形は _unwrap で外れる
     root, calls = _chain(v)
     ops = [(c[0], c[1], c[2]) for c in calls]
-    if any(c[2] for c in ops):  # キーワード引数つき(filter(a=1) など)は移さない
+    where = ""
+    # Django の filter(列=整数/真偽/文字列) だけは、列が確かにあるときに WHERE へ移す(ほかのキーワード引数つきは移さない)
+    if ops and ops[0][0] == "filter" and ops[0][2] and not ops[0][1] and not any(c[2] for c in ops[1:]):
+        wm = _where(ops[0][2], root, by_name)
+        if wm is None:
+            return None
+        where = wm
+        ops[0] = ("all", [], [])
+    if any(c[2] for c in ops):
         return None
 
     def done(kind, mname):
         m = by_name.get(mname)
-        return (kind, m) if m else None
+        return (kind, m, where) if m else None
 
     # Django: M.objects.all() / values() / count()
     if isinstance(root, ast.Attribute) and root.attr == "objects" and isinstance(root.value, ast.Name):
@@ -83,7 +118,8 @@ def match_query(source, models):
     return None
 
 
-def sql_for(kind, model):
+def sql_for(kind, model, where=""):
+    w = (" WHERE " + where) if where else ""
     if kind == "count":
-        return 'SELECT COUNT(*) FROM "%s"' % model.table
-    return 'SELECT * FROM "%s"' % model.table
+        return 'SELECT COUNT(*) FROM "%s"%s' % (model.table, w)
+    return 'SELECT * FROM "%s"%s' % (model.table, w)
