@@ -6,3 +6,26 @@
 - 自動更新: `_autoupdate.py`(2FastAPI/MFastAPI と同じ流儀。`TOPOEM_NO_UPDATE=1` で停止)。リリースに `.sha256` が要る(CI が付ける)。
 - 注意: PowerShell 5.1 で日本語を含むファイルを書かない。
 - 2026-11-17 v0.1.1: 生成物に open-cpu 同梱、`deps --verify`。aruaru-llm は意図的に非同梱。未了と再開用メッセージ(日英)は `PORTING.md` 末尾。/ v0.1.1: open-cpu bundled in generated projects, `deps --verify`; aruaru-llm intentionally not bundled. Open items and the resume message (JA/EN) are at the end of PORTING.md.
+
+## 現状・完成予定・課題 / Status, plan and issues (2026-11-22, v0.1.4)
+**現状(日本語)**
+- Flask / Django / FastAPI を Rust(Poem / RPoem)の骨組みへ変換。ルーティング・パスパラメータの型・メソッドを写す。
+- 業務ロジックの自動移植: 定数・パラメータ・dict/list に加え、**計算式・比較・三項・f文字列・代入・`if/elif/else`**(全部の道が return で終わるもの)を型を追って Rust にする。生成サーバーを実際に起動し Python と同値を確認。
+- ORM: Django / SQLAlchemy / SQLModel のモデルを `src/models.rs`(serde 構造体)と `schema.sql`(PostgreSQL 向け)へ。
+- 生成物に open-cpu を既定で同梱。`deps --apply --verify auto` で依存更新(失敗時は自動復元)。試験26件、CI(3 OS × 3 Python、生成物の cargo check)全成功。
+**完成予定**: ORM の問い合わせ(`.objects.filter` / `session.query`)の移植、テンプレートの変換、ループ・関数呼び出しを含む本体の移植、PyPI 公開。
+**課題**
+1. PyPI: 所有者が pypi.org で pending publisher(project `topoem` / owner `aon-co-jp` / repo `2Poem` / workflow `ci.yml` / environment `pypi`)を登録し、リポジトリ変数 `PYPI_PUBLISH=true` を設定して次のタグを push する必要がある(ワークフローは用意済み、トークン不要)。
+2. 誤訳より未移植を選ぶ方針のため、変数での割り算、型が混ざる `max(7, 3.5)`、連鎖比較、ループ、文字列の直接 return は `TODO` のまま。整数は i64(Python の大きい整数とは違う)。
+3. 実機確認: Mac / iPhone / 実機 BSD は未確認(FreeBSD 14.5 は Windows 上の QEMU で RMojo を確認済み)。aruaru-llm は VPS で遅いため同梱しない。
+
+**Status (English)**
+- Converts Flask / Django / FastAPI into a Rust (Poem / RPoem) skeleton, copying routes, path-parameter types and methods.
+- Automatic business-logic porting: besides constants, parameters and dict/list, it now ports **arithmetic, comparisons, ternaries, f-strings, assignments and `if/elif/else`** (when every path returns) with type tracking. A generated server was run and matched Python's values.
+- ORM: Django / SQLAlchemy / SQLModel models become `src/models.rs` (serde structs) and `schema.sql` (PostgreSQL-oriented).
+- Generated projects bundle open-cpu by default; `deps --apply --verify auto` updates dependencies with automatic restore. 26 tests; CI (3 OS x 3 Python, cargo check of generated output) is all green.
+**Planned**: porting ORM queries (`.objects.filter` / `session.query`), templates, bodies with loops/function calls, and the PyPI release.
+**Issues**
+1. PyPI: the owner must register a pending publisher on pypi.org (project `topoem` / owner `aon-co-jp` / repo `2Poem` / workflow `ci.yml` / environment `pypi`), set the repository variable `PYPI_PUBLISH=true` and push the next tag (workflow is ready, no token needed).
+2. Because unported is preferred over mistranslated, division by a variable, mixed-type `max(7, 3.5)`, chained comparisons, loops and bare string returns stay `TODO`. Integers are i64 (not Python bigints).
+3. Real devices: Mac / iPhone / real BSD are unverified (FreeBSD 14.5 was checked with RMojo in QEMU on Windows). aruaru-llm is not bundled because it is slow on the VPS.
