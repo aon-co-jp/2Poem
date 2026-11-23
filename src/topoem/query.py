@@ -64,6 +64,13 @@ def _where(keywords, root, by_name):
     return " AND ".join(parts)
 
 
+def _slice_limit(v):
+    sl = v.slice
+    if isinstance(sl, ast.Slice) and sl.lower is None and sl.step is None and isinstance(sl.upper, ast.Constant)             and type(sl.upper.value) is int and 0 < sl.upper.value <= 10000:
+        return sl.upper.value
+    return 0
+
+
 def match_query(source, models):
     """関数のソース(先頭数行)から ("all" | "count", モデル) を返す。合わなければ None。"""
     try:
@@ -79,11 +86,15 @@ def match_query(source, models):
     by_name = {m.name: m for m in models}
     v = _unwrap(body[0].value)
     limit = 0
-    if isinstance(v, ast.Subscript) and isinstance(v.slice, ast.Slice) and v.slice.lower is None and v.slice.step is None             and isinstance(v.slice.upper, ast.Constant) and type(v.slice.upper.value) is int and 0 < v.slice.upper.value <= 10000:
-        limit = v.slice.upper.value
+    if isinstance(v, ast.Subscript) and _slice_limit(v):
+        limit = _slice_limit(v)
         v = v.value
     # list(M.objects.values()) のように list が内側にある形は _unwrap で外れる
     root, calls = _chain(v)
+    if not limit and isinstance(root, ast.Subscript) and _slice_limit(root):
+        limit = _slice_limit(root)
+        root, inner = _chain(root.value)
+        calls = inner + calls
     ops = [(c[0], c[1], c[2]) for c in calls]
     where = ""
     # Django の filter(列=整数/真偽/文字列) だけは、列が確かにあるときに WHERE へ移す(ほかのキーワード引数つきは移さない)

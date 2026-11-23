@@ -440,3 +440,12 @@ def test_sqlmodel_where_becomes_where(tmp_path):
     q = query.match_query('def f(session):\n    return session.exec(select(Hero).where(Hero.age >= 18, Hero.name == "x")).all()\n', ms)
     assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "hero" WHERE "age" >= 18 AND "name" = \'x\''
     assert query.match_query("def f(session):\n    return session.exec(select(Hero).where(Hero.zzz == 1)).all()\n", ms) is None
+
+
+def test_slice_then_values_is_ported(tmp_path):
+    from topoem import orm, query
+
+    (tmp_path / "m.py").write_text("from django.db import models\nclass Book(models.Model):\n    title = models.CharField(max_length=10)\n    price = models.FloatField(default=0)\n", encoding="utf-8")
+    ms = orm.extract_models(str(tmp_path))
+    q = query.match_query('def f(r):\n    return JsonResponse(list(Book.objects.filter(price__gt=0).order_by("-price")[:2].values()), safe=False)\n', ms)
+    assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "book" WHERE "price" > 0 ORDER BY "price" DESC LIMIT 2'
