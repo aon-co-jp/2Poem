@@ -188,6 +188,27 @@ def match_query(source, models):
         sel = ops[0][1][0]
         if len(sel.args) == 1 and not sel.keywords and [c[0] for c in ops[1:]] == ["all"] and not ops[1][1]:
             return done("all", _name(sel.args[0]))
+    # SQLModel: session.exec(select(M).where(M.列 == リテラル, ...)).all()
+    if ops and ops[0][0] == "exec" and len(ops[0][1]) == 1 and [c[0] for c in ops[1:]] == ["all"] and not ops[1][1]:
+        inner = ops[0][1][0]
+        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "where" and not inner.keywords and inner.args:
+            sel = inner.func.value
+            if isinstance(sel, ast.Call) and _name(sel.func) == "select" and len(sel.args) == 1 and not sel.keywords:
+                m = by_name.get(_name(sel.args[0]))
+                if m:
+                    cols = {f.name for f in m.fields if not f.ref}
+                    parts = []
+                    for cond in inner.args:
+                        if not (isinstance(cond, ast.Compare) and len(cond.ops) == 1 and isinstance(cond.left, ast.Attribute)
+                                and isinstance(cond.left.value, ast.Name) and cond.left.value.id == m.name and cond.left.attr in cols):
+                            return None
+                        op = {ast.Eq: "=", ast.Gt: ">", ast.GtE: ">=", ast.Lt: "<", ast.LtE: "<="}.get(type(cond.ops[0]))
+                        lit = _lit(cond.comparators[0])
+                        if op is None or lit is None:
+                            return None
+                        parts.append('"%s" %s %s' % (cond.left.attr, op, lit))
+                    where = " AND ".join(parts)
+                    return ("all", m, where, "", 0)
     return None
 
 

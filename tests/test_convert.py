@@ -430,3 +430,13 @@ def test_sqlalchemy_order_by_becomes_order_by(tmp_path):
     q = query.match_query("def f():\n    return jsonify(User.query.order_by(User.email.desc(), User.id).limit(2).all())\n", ms)
     assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "users" ORDER BY "email" DESC, "id" LIMIT 2'
     assert query.match_query("def f():\n    return jsonify(User.query.order_by(User.nope).all())\n", ms) is None
+
+
+def test_sqlmodel_where_becomes_where(tmp_path):
+    from topoem import orm, query
+
+    (tmp_path / "sm.py").write_text("from typing import Optional\nfrom sqlmodel import SQLModel, Field\nclass Hero(SQLModel, table=True):\n    id: Optional[int] = Field(default=None, primary_key=True)\n    name: str\n    age: int | None = None\n", encoding="utf-8")
+    ms = orm.extract_models(str(tmp_path))
+    q = query.match_query('def f(session):\n    return session.exec(select(Hero).where(Hero.age >= 18, Hero.name == "x")).all()\n', ms)
+    assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "hero" WHERE "age" >= 18 AND "name" = \'x\''
+    assert query.match_query("def f(session):\n    return session.exec(select(Hero).where(Hero.zzz == 1)).all()\n", ms) is None
