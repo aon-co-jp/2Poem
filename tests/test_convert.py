@@ -359,12 +359,14 @@ def book_get(request):
     return JsonResponse(Book.objects.get(title="x"))
 def book_ic(request):
     return JsonResponse(list(Book.objects.filter(title__icontains="a").values()), safe=False)
+def book_pct(request):
+    return JsonResponse(list(Book.objects.filter(title__contains="50%").values()), safe=False)
 def book_gt(request):
     return JsonResponse(list(Book.objects.filter(price__gt=1, price__lte=9).values()), safe=False)
 ''', encoding="utf-8")
     (tmp_path / "urls.py").write_text('''from django.urls import path
 from . import views
-urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_count), path("books/cheap/", views.book_filter), path("books/gt/", views.book_gt), path("books/one/", views.book_get), path("books/ic/", views.book_ic), path("books/ord/", views.book_ord)]
+urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_count), path("books/cheap/", views.book_filter), path("books/gt/", views.book_gt), path("books/one/", views.book_get), path("books/ic/", views.book_ic), path("books/pct/", views.book_pct), path("books/ord/", views.book_ord)]
 ''', encoding="utf-8")
     routes, _, _, _ = extract.extract_project(str(tmp_path))
     out = tmp_path / "out"
@@ -375,7 +377,8 @@ urlpatterns = [path("books/", views.book_list), path("books/count/", views.book_
     assert '"price" > 1 AND "price" <= 9' in main
     assert 'WHERE "price" > 0 ORDER BY "price" DESC, "title"' in main
     assert 'WHERE "title" = ' + "'x'" + ' LIMIT 1' in main and "fetch_optional" in main and "NOT_FOUND" in main
-    assert main.count("TODO") >= 1  # icontains など対応外の条件は移さない(誤訳より未移植)
+    assert main.count("TODO") >= 1  # % や _ を含む検索語は移さない(誤訳より未移植)
+    assert """"title" ILIKE '%a%'""" in main  # icontains は ILIKE へ
     assert "mod db;" in main and (out / "src" / "db.rs").exists()
     assert "sqlx::FromRow" in (out / "src" / "models.rs").read_text(encoding="utf-8")
     assert "sqlx" in (out / "Cargo.toml").read_text(encoding="utf-8")

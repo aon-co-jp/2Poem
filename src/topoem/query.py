@@ -58,6 +58,11 @@ def _where(keywords, root, by_name):
         lit = _lit(k.value)
         name, _, lookup = (k.arg or "").partition("__")
         op = {"": "=", "exact": "=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(lookup)
+        like = {"contains": ("LIKE", "%", "%"), "icontains": ("ILIKE", "%", "%"), "startswith": ("LIKE", "", "%"),
+                "istartswith": ("ILIKE", "", "%"), "endswith": ("LIKE", "%", ""), "iendswith": ("ILIKE", "%", "")}.get(lookup)
+        if like and lit is not None and lit.startswith("'") and "%" not in lit and "_" not in lit and name in cols:
+            parts.append('"%s" %s %s' % (name, like[0], "'" + like[1] + lit[1:-1] + like[2] + "'"))
+            continue
         if name not in cols or lit is None or op is None:
             return None
         parts.append('"%s" %s %s' % (name, op, lit))
