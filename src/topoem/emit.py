@@ -78,6 +78,8 @@ def _poem_handler(r, name):
         return "%s\n#[handler]\nasync fn %s(%s) -> poem::Result<Json<Value>> {\n    // 自動移植: ORM の%s(sqlx・PostgreSQL。接続先は環境変数 DATABASE_URL)\n    let pool = db::pool().await.map_err(poem::error::InternalServerError)?;\n    %s\n}\n" % (_comment(r), name, args, {"count": "件数", "one": "1件取得(なければ404)"}.get(kind, "全件取得"), fetch)
     if r.ported_expr:
         note = "    // 自動移植: 計算式・代入・分岐を Rust にした(型を追えた範囲だけ。整数は i64、Python の大きい整数とは違う)\n"
+        if r.ported_kind == "html":
+            return "%s\n#[handler]\nasync fn %s(%s) -> poem::web::Html<String> {\n    // 自動移植: 静的な HTML テンプレート(templates/)をそのまま返す\n    poem::web::Html(%s)\n}\n" % (_comment(r), name, args, r.ported_expr)
         if r.ported_kind == "text":
             return "%s\n#[handler]\nasync fn %s(%s) -> String {\n%s    %s\n}\n" % (_comment(r), name, args, note, r.ported_expr)
         return "%s\n#[handler]\nasync fn %s(%s) -> Json<Value> {\n%s    Json(%s)\n}\n" % (_comment(r), name, args, note, r.ported_expr)
@@ -253,7 +255,7 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
                 os.makedirs(os.path.join(out_dir, "templates"), exist_ok=True)
                 with open(os.path.join(out_dir, "templates", st[0]), "w", encoding="utf-8", newline="\n") as f:
                     f.write(st[1])
-                r.ported_kind, r.ported_expr = "text", 'include_str!("../templates/%s").to_string()' % st[0]
+                r.ported_kind, r.ported_expr = "html", 'include_str!("../templates/%s").to_string()' % st[0]
                 statics += 1
     if statics:
         warnings.append("静的な HTML テンプレート %d 件を templates/ に写し、そのまま返すハンドラへ移しました(変数・タグを含むテンプレートは移しません)" % statics)
