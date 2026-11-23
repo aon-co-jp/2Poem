@@ -73,3 +73,6 @@ MIT License.
 - 2026-11-23 追記: 静的テンプレートのハンドラは `poem::web::Html<String>` を返すようにしました。生成アプリを実際に起動し、`/about` が `200`・`content-type: text/html; charset=utf-8`・本文 `<h1>About</h1>` を返すことを確認済みです(試験34件成功)。
 
 - 2026-11-23 update: the static-template handler now returns `poem::web::Html<String>`. We ran the generated app and verified that `/about` answers `200` with `content-type: text/html; charset=utf-8` and the body `<h1>About</h1>` (34 tests pass).
+
+- 2026-11-23 追記: Djangoのfilterで contains/icontains/startswith/endswith(とi付き)を LIKE/ILIKE へ移すようにした(検索語に % と _ が入るときは移さず未移植)。試験34件成功。
+- 2026-11-23 Added: Django filter lookups contains/icontains/startswith/endswith (and i-variants) now port to LIKE/ILIKE; terms containing % or _ stay unported. 34 tests pass.
