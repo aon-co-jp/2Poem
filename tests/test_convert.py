@@ -449,3 +449,22 @@ def test_slice_then_values_is_ported(tmp_path):
     ms = orm.extract_models(str(tmp_path))
     q = query.match_query('def f(r):\n    return JsonResponse(list(Book.objects.filter(price__gt=0).order_by("-price")[:2].values()), safe=False)\n', ms)
     assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "book" WHERE "price" > 0 ORDER BY "price" DESC LIMIT 2'
+
+
+def test_static_template_is_ported_and_dynamic_is_not(tmp_path):
+    from topoem import emit, extract
+
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "about.html").write_text("<h1>About</h1>\n", encoding="utf-8")
+    (tmp_path / "templates" / "hello.html").write_text("<h1>Hi {{ name }}</h1>\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text('from flask import Flask, render_template\napp = Flask(__name__)\n@app.route("/about")\ndef about():\n    return render_template("about.html")\n@app.route("/hello")\ndef hello():\n    return render_template("hello.html")\n', encoding="utf-8")
+    routes, _, _, _ = extract.extract_project(str(tmp_path))
+    out = tmp_path / "out"
+    emit.generate(routes, str(out / "poem"), "poem", source_root=str(tmp_path))
+    main = (out / "poem" / "src" / "main.rs").read_text(encoding="utf-8")
+    assert 'include_str!("../templates/about.html")' in main and "TODO" in main  # 動的な hello は移さず TODO
+    assert (out / "poem" / "templates" / "about.html").read_text(encoding="utf-8") == "<h1>About</h1>\n"
+    assert not (out / "poem" / "templates" / "hello.html").exists()
+    routes, _, _, _ = extract.extract_project(str(tmp_path))
+    emit.generate(routes, str(out / "rpoem"), "rpoem", source_root=str(tmp_path))  # RPoem は HTML を手書きしない(VNode)ので写さない
+    assert "include_str!" not in (out / "rpoem" / "src" / "main.rs").read_text(encoding="utf-8")

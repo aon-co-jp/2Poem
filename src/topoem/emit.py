@@ -243,6 +243,20 @@ def generate(routes, out_dir, target, name="converted-app", poem_version=DEFAULT
             if q:
                 r.query = (q[0], re.sub(r"\W", "_", q[1].name), query.sql_for(q[0], q[1], q[2], q[3], q[4]))
                 queried += 1
+    from . import template
+
+    statics = 0
+    for r in routes:
+        if target == "poem" and not (r.ported or r.ported_expr or r.query):  # RPoem は HTML を手書きしない方針(VNode)なので Poem のみ
+            st = template.match_static(r.source or "", source_root)
+            if st:
+                os.makedirs(os.path.join(out_dir, "templates"), exist_ok=True)
+                with open(os.path.join(out_dir, "templates", st[0]), "w", encoding="utf-8", newline="\n") as f:
+                    f.write(st[1])
+                r.ported_kind, r.ported_expr = "text", 'include_str!("../templates/%s").to_string()' % st[0]
+                statics += 1
+    if statics:
+        warnings.append("静的な HTML テンプレート %d 件を templates/ に写し、そのまま返すハンドラへ移しました(変数・タグを含むテンプレートは移しません)" % statics)
     main, _ = render_main(routes, target, warnings, open_cpu)
     if models:
         main = main.replace("]\nuse ", "]\nmod models;\n%suse " % ("mod db;\n" if queried else ""), 1)
