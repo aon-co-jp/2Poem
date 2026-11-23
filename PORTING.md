@@ -57,3 +57,7 @@
 - 2026-11-23 追記(未リリース、`main`): Poem 出力に限り、本体が単一の `return render_template("x.html")` / `render(request, "x.html")`(文脈の引数なし)で、`x.html` が見つかり `{{` `{%` `{#` を含まない静的テンプレートだけを、`templates/` に写して `include_str!` で返すハンドラへ移します(`cargo check` 成功)。変数・タグを含むテンプレートは移さず TODO のままです。RPoem 出力は HTML を手書きしない方針(VNode)のため対象外です。調べた範囲では、動的なテンプレートの受け皿には MiniJinja(Jinja2 に近いが Python のメソッド呼び出しは使えない)が候補です。試験34件成功。
 
 - 2026-11-23 update (unreleased, on `main`): for the Poem output only, a static template is now ported when the body is a single `return render_template("x.html")` / `render(request, "x.html")` (no context arguments), `x.html` is found, and it contains no `{{`, `{%` or `{#`: it is copied into `templates/` and returned through `include_str!` (`cargo check` passes). Templates with variables or tags stay TODO. The RPoem output is excluded because RPoem does not hand-write HTML (it uses VNodes). From what we found, MiniJinja (close to Jinja2, but without Python method calls) is the candidate for dynamic templates. 34 tests pass.
+
+- 2026-11-23 追記: 静的テンプレートのハンドラは `poem::web::Html<String>` を返すようにしました。生成アプリを実際に起動し、`/about` が `200`・`content-type: text/html; charset=utf-8`・本文 `<h1>About</h1>` を返すことを確認済みです(試験34件成功)。
+
+- 2026-11-23 update: the static-template handler now returns `poem::web::Html<String>`. We ran the generated app and verified that `/about` answers `200` with `content-type: text/html; charset=utf-8` and the body `<h1>About</h1>` (34 tests pass).
