@@ -127,6 +127,12 @@ def match_query(source, models):
             where = wm
             ops.pop(i)
             break
+    # SQLAlchemy / Flask-SQLAlchemy の limit(整数)
+    for i, c in enumerate(ops):
+        if c[0] == "limit" and not c[2] and len(c[1]) == 1 and isinstance(c[1][0], ast.Constant) and type(c[1][0].value) is int and 0 < c[1][0].value <= 10000 and not limit                 and (ops[0][0] == "query" or (isinstance(root, ast.Attribute) and root.attr == "query")):
+            limit = c[1][0].value
+            ops.pop(i)
+            break
     if any(c[2] for c in ops):
         return None
 

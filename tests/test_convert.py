@@ -410,3 +410,13 @@ def test_slice_becomes_limit(tmp_path):
     q = query.match_query(src % 'Book.objects.order_by("title")[:5]', ms)
     assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "book" ORDER BY "title" LIMIT 5'
     assert query.match_query(src % "Book.objects.all()[2:5]", ms) is None
+
+
+def test_sqlalchemy_limit_becomes_limit(tmp_path):
+    from topoem import orm, query
+
+    (tmp_path / "sa.py").write_text('from sqlalchemy import Column, Integer\nfrom sqlalchemy.orm import declarative_base\nBase = declarative_base()\nclass User(Base):\n    __tablename__ = "users"\n    id = Column(Integer, primary_key=True)\n', encoding="utf-8")
+    ms = orm.extract_models(str(tmp_path))
+    q = query.match_query("def f():\n    return jsonify(User.query.filter_by(id=1).limit(3).all())\n", ms)
+    assert q and query.sql_for(*q[:5]) == 'SELECT * FROM "users" WHERE "id" = 1 LIMIT 3'
+    assert query.match_query("def f():\n    return jsonify(User.query.limit(0).all())\n", ms) is None
