@@ -127,6 +127,30 @@ def match_query(source, models):
             where = wm
             ops.pop(i)
             break
+    # SQLAlchemy / Flask-SQLAlchemy の order_by(M.列 / M.列.desc() / M.列.asc())
+    for i, c in enumerate(ops):
+        if c[0] == "order_by" and not c[2] and c[1] and not order:
+            mname = ""
+            if isinstance(root, ast.Attribute) and root.attr == "query" and isinstance(root.value, ast.Name):
+                mname = root.value.id
+            elif ops[0][0] == "query" and len(ops[0][1]) == 1:
+                mname = _name(ops[0][1][0])
+            m = by_name.get(mname)
+            if not m:
+                return None
+            cols = {f.name for f in m.fields if not f.ref}
+            parts = []
+            for a in c[1]:
+                desc = ""
+                if isinstance(a, ast.Call) and not a.args and not a.keywords and isinstance(a.func, ast.Attribute) and a.func.attr in ("desc", "asc"):
+                    desc = " DESC" if a.func.attr == "desc" else ""
+                    a = a.func.value
+                if not (isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id == mname and a.attr in cols):
+                    return None
+                parts.append('"%s"%s' % (a.attr, desc))
+            order = ", ".join(parts)
+            ops.pop(i)
+            break
     # SQLAlchemy / Flask-SQLAlchemy の limit(整数)
     for i, c in enumerate(ops):
         if c[0] == "limit" and not c[2] and len(c[1]) == 1 and isinstance(c[1][0], ast.Constant) and type(c[1][0].value) is int and 0 < c[1][0].value <= 10000 and not limit                 and (ops[0][0] == "query" or (isinstance(root, ast.Attribute) and root.attr == "query")):
