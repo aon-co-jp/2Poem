@@ -1,3 +1,5 @@
+> Latest translations / 翻訳の最新版: [0-LATEST-TRANSLATIONS.md](0-LATEST-TRANSLATIONS.md)
+
 # 2Poem
 
 **Flask / Django / FastAPI** で組まれた既存システムを、**Rust + [Poem](https://github.com/poem-web/poem)** または **[RPoem](https://github.com/aon-co-jp/RPoem)** の骨組みへ自動変換し、Python・Rust・JavaScript・TypeScript・React・Bootstrap・WunderGraph Cosmo・データベースの**新版への追従**を支援するツールです。`2FastAPI`・`MFastAPI`・`RMojo` と同じ流儀で、**起動時に自動バージョンアップ**します。
