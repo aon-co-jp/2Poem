@@ -1,3 +1,3 @@
 source: aon-co-jp/2Poem
-commit: 5b510354412e0526f536493612d3c9d9802c9d4c
-updated: 2026-11-25T05:49:54Z
+commit: 30e6b8017499f88d43596a34cd795cf2a1d74da8
+updated: 2026-11-27T05:25:06Z
